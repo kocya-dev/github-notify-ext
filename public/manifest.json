@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "GitHub Notification Extension",
+  "version": "1.0.0",
+  "description": "GitHub のイベントを検知し、ユーザーに通知を行う Chrome 拡張機能",
+  "permissions": ["storage", "notifications", "alarms"],
+  "host_permissions": ["https://api.github.com/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_title": "GitHub Notify"
+  }
+}
