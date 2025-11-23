@@ -92,6 +92,14 @@ async function saveLastCheckedAt(iso: string) {
   });
 }
 
+function setBadge(count: number) {
+  const text = count > 0 ? String(count) : '';
+  chrome.action.setBadgeText({ text });
+  if (count > 0) {
+    chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
+  }
+}
+
 async function ensureViewerLogin(client: any): Promise<string> {
   if (runtimeState.viewerLogin) {
     return runtimeState.viewerLogin as string;
@@ -99,7 +107,7 @@ async function ensureViewerLogin(client: any): Promise<string> {
 
   const result = await client(`query GetViewer { viewer { login } }`);
   runtimeState.viewerLogin = (result as any).viewer.login;
-  return runtimeState.viewerLogin;
+  return runtimeState.viewerLogin as string;
 }
 
 function buildRepoQuery(
@@ -363,20 +371,33 @@ async function runWatchCycle() {
 
   if (collected.length > 0) {
     await new Promise<void>((resolve) => {
-      chrome.storage.local.get({ notifications: [] }, (items: any) => {
+      chrome.storage.local.get({ notifications: [], badgeCount: 0 }, (items: any) => {
         const existing: StoredNotification[] = Array.isArray(items.notifications)
           ? items.notifications
           : [];
-
         const existingIds = new Set(existing.map((n) => n.id));
         const merged = existing.slice();
+        let addedCount = 0;
+
         for (const n of collected) {
           if (!existingIds.has(n.id)) {
             merged.push(n);
+            addedCount += 1;
           }
         }
 
-        chrome.storage.local.set({ notifications: merged }, () => resolve());
+        const newBadgeCount = (items.badgeCount ?? 0) + addedCount;
+
+        chrome.storage.local.set(
+          {
+            notifications: merged,
+            badgeCount: newBadgeCount,
+          },
+          () => {
+            setBadge(newBadgeCount);
+            resolve();
+          },
+        );
       });
     });
   }
