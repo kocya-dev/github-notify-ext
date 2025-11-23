@@ -1,4 +1,4 @@
-import { graphql } from "@octokit/graphql";
+import { graphql } from '@octokit/graphql';
 
 type WatchTargetRepo = {
   owner: string;
@@ -27,6 +27,20 @@ let runtimeState: RuntimeState = {
   lastCheckedAt: null,
 };
 
+type NotificationKind = 'new' | 'mention' | 'thread' | 'assignee';
+
+type StoredNotification = {
+  id: string; // `${kind}:${nodeId}` などで一意化
+  kind: NotificationKind;
+  isPullRequest: boolean;
+  owner: string;
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  detectedAt: string; // ISO8601
+};
+
 function createGithubClient(pat: string) {
   return graphql.defaults({
     headers: {
@@ -39,7 +53,7 @@ async function loadSettings(): Promise<Settings | null> {
   return new Promise((resolve) => {
     chrome.storage.sync.get(
       {
-        pat: "",
+        pat: '',
         repos: [],
         intervalMinutes: DEFAULT_INTERVAL_MINUTES,
         enableNewItems: true,
@@ -64,7 +78,7 @@ async function loadSettings(): Promise<Settings | null> {
         };
 
         resolve(settings);
-      }
+      },
     );
   });
 }
@@ -80,7 +94,7 @@ async function saveLastCheckedAt(iso: string) {
 
 async function ensureViewerLogin(client: any): Promise<string> {
   if (runtimeState.viewerLogin) {
-    return runtimeState.viewerLogin;
+    return runtimeState.viewerLogin as string;
   }
 
   const result = await client(`query GetViewer { viewer { login } }`);
@@ -88,10 +102,19 @@ async function ensureViewerLogin(client: any): Promise<string> {
   return runtimeState.viewerLogin;
 }
 
-function buildRepoQuery(repos: WatchTargetRepo[], lastCheckedAt: string, viewerLogin: string): string {
-  const repoPart = repos.length === 0 ? "" : `(${repos.map((r) => `repo:${r.owner}/${r.name}`).join(" OR ")})`;
+function buildRepoQuery(
+  repos: WatchTargetRepo[],
+  lastCheckedAt: string,
+  viewerLogin: string,
+): string {
+  const repoPart =
+    repos.length === 0 ? '' : `(${repos.map((r) => `repo:${r.owner}/${r.name}`).join(' OR ')})`;
 
-  const conditionPart = [`created:>${lastCheckedAt}`, `mentions:${viewerLogin}`, `assignee:${viewerLogin}`].join(" OR ");
+  const conditionPart = [
+    `created:>${lastCheckedAt}`,
+    `mentions:${viewerLogin}`,
+    `assignee:${viewerLogin}`,
+  ].join(' OR ');
 
   return `${repoPart} is:open (${conditionPart})`.trim();
 }
@@ -178,7 +201,7 @@ async function runWatchCycle() {
       repoQuery,
       lastCheckedAt,
       viewerLogin,
-    }
+    },
   );
 
   const issuesAndPrs = (searchResult.search?.nodes ?? []) as any[];
@@ -190,12 +213,17 @@ async function runWatchCycle() {
 
   for (const node of issuesAndPrs) {
     const isNew = new Date(node.createdAt) > new Date(lastCheckedAt);
-    const hasAssigneeMe = (node.assignees?.nodes ?? []).some((a: any) => a.login === viewerLogin) ?? false;
+    const hasAssigneeMe =
+      (node.assignees?.nodes ?? []).some((a: any) => a.login === viewerLogin) ?? false;
 
     const comments = node.comments?.nodes ?? [];
-    const hasNewComment = comments.some((c: any) => new Date(c.updatedAt) > new Date(lastCheckedAt)) ?? false;
+    const hasNewComment =
+      comments.some((c: any) => new Date(c.updatedAt) > new Date(lastCheckedAt)) ?? false;
 
-    const textTargets = [node.body as string, ...comments.map((c: any) => (c.body as string) ?? "")];
+    const textTargets = [
+      node.body as string,
+      ...comments.map((c: any) => (c.body as string) ?? ''),
+    ];
     const mentionToken = `@${viewerLogin}`;
     const hasMention = textTargets.some((t) => t && t.includes(mentionToken)) ?? false;
 
@@ -209,7 +237,7 @@ async function runWatchCycle() {
       assigneeCommentItems.push(node);
     }
 
-    const isPR = node.__typename === "PullRequest";
+    const isPR = node.__typename === 'PullRequest';
     if (isPR && new Date(node.updatedAt) > new Date(lastCheckedAt)) {
       updatedPrIds.push(node.id);
     }
@@ -256,7 +284,7 @@ async function runWatchCycle() {
         prIds: updatedPrIds,
         lastCheckedAt,
         viewerLogin,
-      }
+      },
     );
 
     for (const pr of (reviewResult.nodes ?? []) as any[]) {
@@ -268,7 +296,11 @@ async function runWatchCycle() {
         if (comments.length === 0) continue;
 
         const mentionToken = `@${viewerLogin}`;
-        const hadMentionBefore = comments.some((c: any) => new Date(c.createdAt) <= new Date(lastCheckedAt) && (c.body as string)?.includes(mentionToken));
+        const hadMentionBefore = comments.some(
+          (c: any) =>
+            new Date(c.createdAt) <= new Date(lastCheckedAt) &&
+            (c.body as string)?.includes(mentionToken),
+        );
         const lastComment = comments[comments.length - 1];
         const lastCreatedAt = new Date(lastComment.createdAt);
 
@@ -283,8 +315,71 @@ async function runWatchCycle() {
     }
   }
 
-  // TODO: newItems / mentionItems / assigneeCommentItems / mentionThreadItems を
-  // 通知一覧ストアに反映し、バッジや通知を更新する
+  // 通知一覧ストアへ反映（重複排除しつつ追加）
+  const detectedAt = nowIso;
+  const toStored = (node: any, kind: NotificationKind): StoredNotification | null => {
+    if (!node || !node.repository) return null;
+    const isPullRequest = node.__typename === 'PullRequest';
+    const owner = node.repository.owner?.login ?? '';
+    const repo = node.repository.name ?? '';
+    const number = typeof node.number === 'number' ? node.number : 0;
+    const title = node.title ?? '';
+    const url = node.url ?? '';
+    const nodeId = node.id ?? `${owner}/${repo}#${number}`;
+    const id = `${kind}:${nodeId}`;
+
+    return {
+      id,
+      kind,
+      isPullRequest,
+      owner,
+      repo,
+      number,
+      title,
+      url,
+      detectedAt,
+    };
+  };
+
+  const collected: StoredNotification[] = [];
+
+  for (const n of newItems) {
+    const s = toStored(n, 'new');
+    if (s) collected.push(s);
+  }
+  for (const n of mentionItems) {
+    const s = toStored(n, 'mention');
+    if (s) collected.push(s);
+  }
+  for (const n of assigneeCommentItems) {
+    const s = toStored(n, 'assignee');
+    if (s) collected.push(s);
+  }
+  for (const t of mentionThreadItems) {
+    const pr = (t as any).pr;
+    const s = toStored(pr, 'thread');
+    if (s) collected.push(s);
+  }
+
+  if (collected.length > 0) {
+    await new Promise<void>((resolve) => {
+      chrome.storage.local.get({ notifications: [] }, (items: any) => {
+        const existing: StoredNotification[] = Array.isArray(items.notifications)
+          ? items.notifications
+          : [];
+
+        const existingIds = new Set(existing.map((n) => n.id));
+        const merged = existing.slice();
+        for (const n of collected) {
+          if (!existingIds.has(n.id)) {
+            merged.push(n);
+          }
+        }
+
+        chrome.storage.local.set({ notifications: merged }, () => resolve());
+      });
+    });
+  }
 
   await saveLastCheckedAt(nowIso);
 }
@@ -293,8 +388,8 @@ function setupAlarms() {
   loadSettings().then((settings) => {
     const intervalMinutes = settings?.intervalMinutes ?? DEFAULT_INTERVAL_MINUTES;
 
-    chrome.alarms.clear("github-notify-watch", () => {
-      chrome.alarms.create("github-notify-watch", {
+    chrome.alarms.clear('github-notify-watch', () => {
+      chrome.alarms.create('github-notify-watch', {
         periodInMinutes: intervalMinutes,
       });
     });
@@ -306,9 +401,9 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "github-notify-watch") {
+  if (alarm.name === 'github-notify-watch') {
     runWatchCycle().catch((err) => {
-      console.error("watch cycle failed", err);
+      console.error('watch cycle failed', err);
     });
   }
 });
