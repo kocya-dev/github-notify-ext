@@ -8,7 +8,8 @@
 
 実装は下記の手順で進めてください。
 
-- 実装、ビルド確認
+- 実装
+- ビルド確認: npm run build
 - テスト実装
 - テスト実施: npm run test
 - linter実施: npm run lint
