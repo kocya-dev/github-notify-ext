@@ -9,6 +9,7 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "options_page": "options.html",
   "action": {
     "default_popup": "src/popup/index.html",
     "default_title": "GitHub Notify"
