@@ -17,6 +17,13 @@ type SettingsForm = {
 
 const DEFAULT_INTERVAL_MINUTES = 5;
 
+/**
+ * オプションページのルートコンポーネント。
+ *
+ * - sync storage から設定値を読み込みフォームへ反映
+ * - フォーム入力を sync storage へ保存
+ * - 監視対象リポジトリの owner/repo 形式テキストを配列に変換
+ */
 const OptionsApp: React.FC = () => {
   const [form, setForm] = useState<SettingsForm>({
     pat: '',
@@ -57,10 +64,21 @@ const OptionsApp: React.FC = () => {
     );
   }, []);
 
+  /**
+   * フォーム状態を部分的に更新する。
+   * @param patch 変更したいフィールドだけを含むパッチ
+   */
   const handleChange = (patch: Partial<SettingsForm>) => {
     setForm((prev) => ({ ...prev, ...patch }));
   };
 
+  /**
+   * テキストエリアの内容から監視対象リポジトリ一覧を解析する。
+   *
+   * 各行は `owner/repo` 形式を想定し、不正な行は無視する。
+   * @param text 入力テキスト
+   * @returns 監視対象リポジトリ配列
+   */
   const parseRepos = (text: string): WatchTargetRepo[] => {
     const lines = text
       .split(/\r?\n/)
@@ -76,6 +94,13 @@ const OptionsApp: React.FC = () => {
     return result;
   };
 
+  /**
+   * 設定フォームの送信ハンドラ。
+   *
+   * - テキストからリポジトリ一覧を解析
+   * - sync storage にすべての設定値を保存
+   * - 保存完了メッセージを一時的に表示
+   */
   const handleSubmit: React.FormEventHandler = (e) => {
     e.preventDefault();
     setIsSaving(true);
